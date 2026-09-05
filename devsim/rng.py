@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import string
+import uuid
 
 
 class DeterministicRNG:
@@ -19,6 +20,12 @@ class DeterministicRNG:
 
     def choice(self, values: list[str] | tuple[str, ...]) -> str:
         return self._random.choice(values)
+
+    def uniform(self, start: float, end: float) -> float:
+        return self._random.uniform(start, end)
+
+    def uuid(self) -> str:
+        return str(uuid.UUID(int=self._random.getrandbits(128), version=4))
 
     def token(self, length: int = 12) -> str:
         alphabet = string.ascii_lowercase + string.digits

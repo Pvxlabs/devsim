@@ -46,6 +46,9 @@ class Scenario:
     timeline: tuple[TimelineItem, ...]
     source_path: str
     content_hash: str
+    runtime_mode: str = "finite"
+    max_events: int | None = None
+    max_virtual_duration_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,9 @@ class ScheduledEvent:
     payload: dict[str, Any]
     step_id: str = ""
     expect: dict[str, Any] = field(default_factory=dict)
+    recurring: bool = False
+    every_ms: int | None = None
+    until_ms: int | None = None
 
 
 @dataclass
@@ -69,6 +75,7 @@ class ActionContext:
     event_sequence: int
     rng: Any
     steps: dict[str, dict[str, Any]] = field(default_factory=dict)
+    values: dict[str, Any] = field(default_factory=dict)
 
     @property
     def run(self) -> dict[str, Any]:
@@ -79,6 +86,10 @@ class ActionContext:
             "virtual_time_ms": self.virtual_ms,
             "event_sequence": self.event_sequence,
         }
+
+    @property
+    def context(self) -> dict[str, Any]:
+        return self.values
 
 
 @dataclass
@@ -104,6 +115,11 @@ class RuntimeState:
     stop_requested: bool = False
     last_operation: str | None = None
     error: dict[str, Any] | None = None
+    events_executed: int = 0
+    events_failed: int = 0
+    next_event: dict[str, Any] | None = None
+    heartbeat: str | None = None
+    result: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +138,11 @@ class RuntimeState:
             "stop_requested": self.stop_requested,
             "last_operation": self.last_operation,
             "error": self.error,
+            "events_executed": self.events_executed,
+            "events_failed": self.events_failed,
+            "next_event": self.next_event,
+            "heartbeat": self.heartbeat,
+            "result": self.result,
         }
 
     @classmethod

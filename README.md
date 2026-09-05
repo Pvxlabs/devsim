@@ -19,6 +19,26 @@ DevSim orchestrates a real development environment: database lifecycle commands,
 - scenario expectations, step context, inspect, and replay identity
 - local development safety guard for reset, seed, and down operations
 
+## M2 Persistent Runtime
+
+DevSim can keep a scenario running as a managed local process. A finite
+scenario exits after its timeline completes; a persistent scenario continues
+recurring events until it is stopped or reaches a configured limit.
+
+```bash
+devsim scenario start active-runtime --seed 42
+devsim status
+devsim scenario pause
+devsim scenario resume
+devsim scenario stop
+```
+
+Persistent scenarios use `runtime.mode: persistent`. Repeating events without
+`until` are allowed only in that mode. `runtime.limits.max_events` and
+`runtime.limits.max_virtual_duration` bound long-running previews. Ownership
+and heartbeats live under `.devsim/runtime/`; `status` reports a dead owner as
+`STALE`, and `scenario reset` clears the metadata.
+
 ## Install
 
 ```bash
@@ -42,6 +62,12 @@ devsim status
 devsim status --json
 devsim scenario list --json
 devsim scenario run active-session --seed 42 --json
+devsim scenario start active-runtime --seed 42 --json
+devsim scenario pause --json
+devsim scenario resume --json
+devsim scenario stop --json
+devsim scenario validate --all --json
+devsim doctor --json
 devsim scenario inspect <run_id> --json
 devsim scenario replay <run_id> --json
 devsim scenario replay <run_id> --allow-changed-scenario --json

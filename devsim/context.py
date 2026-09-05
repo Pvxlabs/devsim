@@ -52,8 +52,14 @@ def lookup(reference: str, context: ActionContext) -> Any:
             raise ContextError(f"step {step_id!r} has no completed result")
         return _walk(context.steps[step_id], path, f"step reference {reference!r}")
 
+    if reference.startswith("context."):
+        key = reference[8:]
+        if not key:
+            raise ContextError("empty runtime context reference")
+        return _walk(context.values, key, f"context reference {reference!r}")
+
     raise ContextError(
-        f"unsupported variable reference {reference!r}; use env.*, run.*, or steps.<id>.*"
+        f"unsupported variable reference {reference!r}; use env.*, run.*, steps.<id>.*, or context.*"
     )
 
 

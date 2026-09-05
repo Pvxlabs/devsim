@@ -52,3 +52,6 @@ class AdapterRegistry:
         elif name == "http":
             name = "api.request"
         return self.resolve(name)
+
+    def actions(self) -> tuple[str, ...]:
+        return tuple(sorted(self._actions))

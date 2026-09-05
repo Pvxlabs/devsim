@@ -88,8 +88,52 @@ def _canonical_hash(data: dict[str, Any]) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def load_scenario(path: Path) -> Scenario:
-    data = load_yaml(path)
+def _merge_scenario_data(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if key == "timeline":
+            merged[key] = [*(merged.get(key) or []), *(value or [])]
+        elif key == "include":
+            continue
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_scenario_data(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _resolve_include(root: Path, source: Path, value: Any) -> Path:
+    include = value.get("file") if isinstance(value, dict) else value
+    if not isinstance(include, str) or not include.strip():
+        raise ConfigError(f"{source}: include entries must be a filename or {{file: filename}}")
+    candidate = (source.parent / include).resolve()
+    root = root.resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ConfigError(f"{source}: include path escapes scenario root: {include!r}")
+    if candidate.suffix not in {".yaml", ".yml"}:
+        raise ConfigError(f"{source}: include must reference a .yaml or .yml file")
+    return candidate
+
+
+def _load_composed_data(path: Path, root: Path, stack: tuple[Path, ...] = ()) -> dict[str, Any]:
+    resolved = path.resolve()
+    if resolved in stack:
+        cycle = " -> ".join(item.name for item in (*stack, resolved))
+        raise ConfigError(f"scenario include cycle detected: {cycle}")
+    data = load_yaml(resolved)
+    composed: dict[str, Any] = {}
+    includes = data.get("include", []) or []
+    if not isinstance(includes, list):
+        raise ConfigError(f"{resolved}: include must be a list")
+    for entry in includes:
+        included_path = _resolve_include(root, resolved, entry)
+        composed = _merge_scenario_data(composed, _load_composed_data(included_path, root, (*stack, resolved)))
+    return _merge_scenario_data(composed, data)
+
+
+def load_scenario(path: Path, scenario_root: Path | None = None) -> Scenario:
+    path = path.resolve()
+    data = _load_composed_data(path, (scenario_root or path.parent).resolve())
     if data.get("version") != 1:
         raise ConfigError(f"{path}: scenario version must be 1")
     name = data.get("name")
@@ -102,6 +146,16 @@ def load_scenario(path: Path) -> Scenario:
         raise ConfigError(f"{path}: clock.speed must be a number") from exc
     if speed <= 0:
         raise ConfigError(f"{path}: clock.speed must be positive")
+    runtime = _mapping(data.get("runtime"), "runtime")
+    mode = str(runtime.get("mode", "finite"))
+    if mode not in {"finite", "persistent"}:
+        raise ConfigError(f"{path}: runtime.mode must be finite or persistent")
+    limits = _mapping(runtime.get("limits"), "runtime.limits")
+    max_events = limits.get("max_events")
+    if max_events is not None and (not isinstance(max_events, int) or isinstance(max_events, bool) or max_events <= 0):
+        raise ConfigError(f"{path}: runtime.limits.max_events must be a positive integer")
+    max_duration = limits.get("max_virtual_duration")
+    max_duration_ms = parse_optional_duration(max_duration, "runtime.limits.max_virtual_duration", allow_hours=True) if max_duration is not None else None
     raw_timeline = data.get("timeline", [])
     if not isinstance(raw_timeline, list):
         raise ConfigError(f"{path}: timeline must be a list")
@@ -132,7 +186,7 @@ def load_scenario(path: Path) -> Scenario:
         at_ms = parse_optional_duration(raw.get("at"), f"timeline[{index}].at") if has_at else None
         every_ms = parse_optional_duration(raw.get("every"), f"timeline[{index}].every") if has_every else None
         until_ms = parse_optional_duration(raw.get("until"), f"timeline[{index}].until") if "until" in raw else None
-        if has_every and until_ms is None:
+        if has_every and until_ms is None and mode != "persistent":
             raise ConfigError(f"{path}: repeating timeline item {index} requires until")
         if has_every and every_ms == 0:
             raise ConfigError(f"{path}: timeline[{index}].every must be greater than zero")
@@ -141,21 +195,12 @@ def load_scenario(path: Path) -> Scenario:
         if has_every and until_ms is not None and until_ms < every_ms:
             raise ConfigError(f"{path}: timeline[{index}].until must be >= every")
         timeline.append(TimelineItem(at_ms, every_ms, until_ms, raw["action"], payload, index, step_id, expect))
-    return Scenario(
-        version=1,
-        name=name,
-        description=str(data.get("description", "")),
-        speed=speed,
-        timeline=tuple(timeline),
-        source_path=str(path),
-        content_hash=_canonical_hash(data),
-    )
+    return Scenario(1, name, str(data.get("description", "")), speed, tuple(timeline), str(path), _canonical_hash(data), mode, max_events, max_duration_ms)
 
-
-def parse_optional_duration(value: Any, field: str) -> int:
+def parse_optional_duration(value: Any, field: str, allow_hours: bool = False) -> int:
     from .timeparse import parse_duration
 
-    return parse_duration(value, field=field)
+    return parse_duration(value, field=field, allow_hours=allow_hours)
 
 
 def discover_scenarios(project_dir: Path, manifest: Manifest) -> list[Scenario]:
@@ -164,5 +209,10 @@ def discover_scenarios(project_dir: Path, manifest: Manifest) -> list[Scenario]:
         return []
     scenarios = []
     for path in sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml")):
-        scenarios.append(load_scenario(path))
+        try:
+            scenarios.append(load_scenario(path, directory))
+        except ConfigError:
+            if "name" not in load_yaml(path):
+                continue
+            raise
     return scenarios

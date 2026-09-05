@@ -15,6 +15,7 @@ from .redaction import redact
 
 
 class StateStore:
+    max_event_bytes = 64 * 1024
     def __init__(self, project_dir: Path):
         self.directory = project_dir / ".devsim"
         self.path = self.directory / "state.json"
@@ -37,8 +38,23 @@ class StateStore:
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         path = self.run_path(run_id)
         safe_event = redact(event, set(environment_secret_values()) | {str(value) for value in secret_values})
+        safe_event = self._bound_event(safe_event)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(safe_event, sort_keys=True, separators=(",", ":")) + "\n")
+
+    def _bound_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        encoded = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) <= self.max_event_bytes:
+            return event
+        bounded = dict(event)
+        bounded["result_summary_truncated"] = True
+        for key in ("payload", "result", "error", "expect"):
+            if key in bounded:
+                bounded[key] = _truncate_value(bounded[key], 2048)
+        encoded = json.dumps(bounded, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > self.max_event_bytes:
+            bounded = {"type": event.get("type"), "status": event.get("status"), "run_id": event.get("run_id"), "sequence": event.get("sequence"), "result_summary_truncated": True}
+        return bounded
 
     def run_path(self, run_id: str) -> Path:
         if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id):
@@ -80,3 +96,13 @@ class StateStore:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+
+
+def _truncate_value(value: Any, limit: int) -> Any:
+    if isinstance(value, str):
+        return value[:limit] + ("...[truncated]" if len(value) > limit else "")
+    if isinstance(value, dict):
+        return {str(key): _truncate_value(item, limit) for key, item in list(value.items())[:100]}
+    if isinstance(value, list):
+        return [_truncate_value(item, limit) for item in value[:100]]
+    return value
