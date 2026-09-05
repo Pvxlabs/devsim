@@ -1,0 +1,25 @@
+version: 1
+project:
+  name: fastapi-postgres-example
+environment:
+  mode: development
+database:
+  engine: postgres
+  lifecycle:
+    up:
+      command: docker compose up -d postgres app
+    migrate:
+      command: python scripts/migrate.py
+    reset:
+      command: python scripts/reset_database.py
+    down:
+      command: docker compose down
+seed:
+  command: python devsim/seed.py
+scenarios:
+  path: devsim/scenarios
+runtime:
+  base_url: http://127.0.0.1:8000
+  adapters:
+    - type: http
+    - type: command

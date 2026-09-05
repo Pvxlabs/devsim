@@ -1,0 +1,28 @@
+version: 1
+project:
+  name: devsim-example
+environment:
+  mode: development
+database:
+  engine: postgres
+  lifecycle:
+    up:
+      command: docker compose -f examples/fastapi-postgres/docker-compose.yml up -d postgres app
+    migrate:
+      command: python scripts/migrate.py
+      cwd: examples/fastapi-postgres
+    reset:
+      command: python scripts/reset_database.py
+      cwd: examples/fastapi-postgres
+    down:
+      command: docker compose -f examples/fastapi-postgres/docker-compose.yml down
+seed:
+  command: python devsim/seed.py
+  cwd: examples/fastapi-postgres
+scenarios:
+  path: examples/fastapi-postgres/devsim/scenarios
+runtime:
+  base_url: http://127.0.0.1:8000
+  adapters:
+    - type: http
+    - type: command

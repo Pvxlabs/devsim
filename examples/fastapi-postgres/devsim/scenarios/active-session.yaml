@@ -1,0 +1,31 @@
+version: 1
+name: active-session
+description: |
+  Demonstrates a normal evolving runtime with a real API and database.
+clock:
+  speed: 10
+timeline:
+  - at: 0s
+    action: lifecycle.start
+  - at: 1s
+    action: api.request
+    with:
+      method: POST
+      path: /api/demo/events
+      json:
+        type: session_started
+      expected_status: 201
+  - at: 2s
+    action: command.run
+    with:
+      command: python scripts/generate_event.py
+      cwd: .
+  - every: 1s
+    until: 5s
+    action: api.request
+    with:
+      method: POST
+      path: /api/demo/heartbeat
+      expected_status: 200
+  - at: 6s
+    action: lifecycle.complete
