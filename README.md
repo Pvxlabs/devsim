@@ -51,6 +51,20 @@ pip install -e '.[test]'
 
 The CLI can also be invoked as `python -m devsim`.
 
+For a new project, the canonical first commands are:
+
+```bash
+devsim detect
+devsim init
+devsim doctor
+devsim preview normal --seed 42
+```
+
+`devsim --json` is the agent interface. Use `devsim capabilities --json`,
+`devsim detect --json`, and `devsim project status --json` for discovery. The
+repository-owned Codex skill can be installed into the standard skill directory
+with `devsim skill install`.
+
 ## CLI
 
 Run commands from a project directory containing `devsim.yaml`:
@@ -70,6 +84,13 @@ devsim scenario resume --json
 devsim scenario stop --json
 devsim scenario validate --all --json
 devsim doctor --json
+devsim detect --json
+devsim capabilities --json
+devsim project status --json
+devsim project validate --json
+devsim quickstart
+devsim preview status --json
+devsim preview stop --json
 devsim scenario inspect <run_id> --json
 devsim scenario replay <run_id> --json
 devsim scenario replay <run_id> --allow-changed-scenario --json
@@ -140,7 +161,10 @@ runtime:
     - type: command
 ```
 
-All project behavior is injected through commands and adapters. DevSim does not implement a migration framework and does not write runtime metadata into the application's database.
+All project behavior is injected through commands and adapters. DevSim does not
+implement a migration framework. Direct writes are supported for baseline
+initialization of a safe DEV/Preview PostgreSQL database; runtime evolution
+should use the real application path.
 
 ### Schema-aware seed mode
 
@@ -168,7 +192,11 @@ only the configured development database, orders tables by foreign-key dependenc
 assigns relationships deterministically, and fails with `CYCLIC_SEED_DEPENDENCY`
 or `SEED_SCHEMA_DRIFT` when the contract cannot be applied safely.
 
-The integration boundary is intentionally generic: an external project owns `devsim.yaml`, its seed command, its scenario files, and any helper commands. DevSim only executes those contracts. See [docs/integration.md](docs/integration.md), [docs/scenario-reference.md](docs/scenario-reference.md), and [docs/adapter-reference.md](docs/adapter-reference.md).
+The integration boundary is intentionally generic: an external project owns
+`devsim.yaml`, its seed contract, its scenario files, and any helper commands.
+DevSim only executes those contracts. See [docs/integration-standard.md](docs/integration-standard.md),
+[docs/agent-contract.md](docs/agent-contract.md), [docs/integration.md](docs/integration.md),
+[docs/scenario-reference.md](docs/scenario-reference.md), and [docs/adapter-reference.md](docs/adapter-reference.md).
 
 ## Scenario DSL
 

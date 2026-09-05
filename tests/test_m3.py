@@ -9,12 +9,13 @@ from urllib.error import HTTPError
 
 import pytest
 
-from devsim.cli import build_parser, dispatch, init_project
+from devsim.cli import build_parser, dispatch, init_project, preview_status
 from devsim.config import load_manifest
 from devsim.control import _make_server
 from devsim.errors import AdapterError, SafetyError
 from devsim.models import Manifest, RuntimeState
 from devsim.runner import ScenarioRunner
+from devsim.runtime import RuntimeOwnership
 from devsim.schema import ColumnModel, ForeignKeyModel, SchemaError, SchemaModel, TableModel, _model_from_rows
 from devsim.seed import (
     GeneratorRegistry,
@@ -285,6 +286,35 @@ def test_preview_preset_resets_before_starting_persistent_scenario(tmp_path: Pat
     assert result["profile"] == "normal"
     assert result["seed_profile"] == "busy"
     assert result["scenario"] == "active-runtime"
+    assert result["project"] == "sample"
+    assert result["application"]["url"] == "http://127.0.0.1:8000"
+    assert result["control"]["url"] == "http://127.0.0.1:8001"
+    assert result["run_id"] == "run-1"
+
+
+def test_preview_status_reads_profile_from_runtime_ownership(tmp_path: Path) -> None:
+    (tmp_path / "devsim.yaml").write_text(
+        "version: 1\nproject: {name: sample}\nenvironment: {mode: development}\n"
+        "database: {engine: postgres}\nruntime: {base_url: http://127.0.0.1:8000}\n",
+        encoding="utf-8",
+    )
+    manifest = load_manifest(tmp_path)
+    store = StateStore(tmp_path)
+    ownership = RuntimeOwnership(tmp_path)
+    state = store.load(manifest.project_name)
+    state.status = "running"
+    state.scenario = "normal"
+    state.seed = 42
+    state.run_id = "run-1"
+    state.last_operation = "scenario.run"
+    store.save(state)
+    ownership.claim({"run_id": "run-1", "pid": 0, "scenario": "normal", "seed": 42, "profile": "normal", "status": "STARTING"})
+
+    result = preview_status(tmp_path, manifest, store, ownership)
+
+    assert result["profile"] == "normal"
+    assert result["runtime"]["process_alive"] is False
+    ownership.clear()
 
 
 def test_init_generates_non_destructive_seed_draft(tmp_path: Path) -> None:
@@ -293,6 +323,7 @@ def test_init_generates_non_destructive_seed_draft(tmp_path: Path) -> None:
     draft = tmp_path / "devsim" / "seed.yaml"
     assert draft.exists()
     original = (tmp_path / "devsim.yaml").read_text(encoding="utf-8")
-    with pytest.raises(Exception, match="refusing to overwrite"):
-        init_project(tmp_path)
+    second = init_project(tmp_path)
+    assert second["ok"] is True
+    assert "devsim.yaml" in second["kept"]
     assert (tmp_path / "devsim.yaml").read_text(encoding="utf-8") == original

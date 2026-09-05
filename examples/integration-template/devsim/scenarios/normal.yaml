@@ -1,0 +1,8 @@
+# Project-owned scenario skeleton. Add real application actions and expectations.
+version: 1
+name: normal
+description: Representative normal preview state.
+clock: {speed: 10}
+runtime:
+  mode: persistent
+timeline: []

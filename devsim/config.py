@@ -65,6 +65,15 @@ def load_manifest(project_dir: Path) -> Manifest:
         seed_command = _command(seed_data, "seed")
     elif seed_data is not None:
         seed_config = _mapping(seed_data, "seed")
+        spec = seed_config.get("spec")
+        if spec is not None:
+            if not isinstance(spec, str) or not spec.strip():
+                raise ConfigError("seed.spec must be a non-empty path")
+            spec_path = (project_dir / spec).resolve()
+            if spec_path != project_dir.resolve() and project_dir.resolve() not in spec_path.parents:
+                raise ConfigError("seed.spec must stay inside the project directory")
+            spec_data = _mapping(load_yaml(spec_path), "seed spec")
+            seed_config = {**spec_data, **{key: value for key, value in seed_config.items() if key != "spec"}}
     scenarios = _mapping(data.get("scenarios"), "scenarios")
     runtime = _mapping(data.get("runtime"), "runtime")
     adapters = runtime.get("adapters", [{"type": "http"}, {"type": "command"}])

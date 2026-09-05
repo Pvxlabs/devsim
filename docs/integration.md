@@ -6,7 +6,8 @@ DevSim is an orchestration layer around an existing development environment. The
 
 1. Add a root `devsim.yaml` to the application repository.
 2. Set `project.name`, `environment.mode`, and the PostgreSQL lifecycle commands needed by the project.
-3. Add an optional project-owned `seed.command` for deterministic baseline data.
+3. Add either a project-owned `seed.command` or schema-aware PostgreSQL seed
+   intent for deterministic baseline data.
 4. Set `scenarios.path` and the local `runtime.base_url`.
 5. Create scenario YAML files under the configured path.
 6. Start the application through the project's existing lifecycle command.
@@ -40,7 +41,12 @@ runtime:
     - type: command
 ```
 
-The lifecycle and seed commands are ordinary project commands. DevSim does not connect to PostgreSQL directly and does not write application rows. Runtime mutations should go through the application's local API or application command path. Credentials belong in the external project's environment or scenario context; do not hard-code secrets in DevSim Core.
+The lifecycle and custom seed commands are ordinary project commands. Baseline
+initialization may write directly to a DEV/Preview PostgreSQL database through
+DevSim's schema-aware seed mode. Runtime evolution should go through the
+application's local API, application command, or browser path. Credentials
+belong in the external project's environment or scenario context; do not
+hard-code secrets in DevSim Core.
 
 ## Contract Layers
 
@@ -49,3 +55,7 @@ The lifecycle and seed commands are ordinary project commands. DevSim does not c
 **Internal:** lifecycle marker adapters and the on-disk `.devsim` state implementation.
 
 **Experimental:** project-specific helper commands and application behavior invoked by those commands. They are owned and versioned by the external project.
+
+See [integration-standard.md](integration-standard.md) for the complete v1
+contract and [agent-contract.md](agent-contract.md) for machine-readable agent
+workflow and exit codes.

@@ -29,4 +29,4 @@ runtime:
 presets:
   normal:
     seed_profile: default
-    scenario: active-session
+    scenario: normal

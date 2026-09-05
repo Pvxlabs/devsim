@@ -1,0 +1,4 @@
+interface:
+  display_name: DevSim Preview Runtime
+  short_description: Discover and validate deterministic application previews
+  default_prompt: Use DevSim when setting up or validating stateful DEV/Preview application behavior.

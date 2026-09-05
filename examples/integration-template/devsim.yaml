@@ -1,0 +1,22 @@
+version: 1
+project:
+  name: example-app
+environment:
+  mode: development
+database:
+  engine: postgres
+  lifecycle: {}
+seed:
+  mode: schema
+  spec: devsim/seed.yaml
+scenarios:
+  path: devsim/scenarios
+runtime:
+  base_url: http://127.0.0.1:8000
+  adapters:
+    - type: http
+    - type: command
+presets:
+  normal:
+    seed_profile: normal
+    scenario: normal

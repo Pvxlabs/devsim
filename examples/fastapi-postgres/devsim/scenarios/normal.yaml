@@ -1,0 +1,41 @@
+version: 1
+name: normal
+description: Representative normal preview state with continuously completing events.
+clock:
+  speed: 10
+runtime:
+  mode: persistent
+timeline:
+  - at: 0s
+    action: lifecycle.start
+  - at: 1s
+    action: api.request
+    with:
+      method: POST
+      path: /api/demo/events
+      json:
+        type: session_started
+    expect:
+      status: 201
+  - at: 2s
+    action: command.run
+    with:
+      command: python scripts/generate_event.py
+      cwd: .
+    expect:
+      exit_code: 0
+  - every: 1s
+    until: 5s
+    action: api.request
+    with:
+      method: POST
+      path: /api/demo/heartbeat
+    expect:
+      status: 200
+  - every: 10s
+    action: api.request
+    with:
+      method: POST
+      path: /api/demo/heartbeat
+    expect:
+      status: 200

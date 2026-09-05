@@ -1,0 +1,9 @@
+# Project-owned semantic seed intent. Add tables, columns, generators, and profiles.
+mode: schema
+schema:
+  database_url: ${env.DEVSIM_DATABASE_URL}
+plan:
+  tables: {}
+profiles:
+  normal: {}
+  minimal: {}

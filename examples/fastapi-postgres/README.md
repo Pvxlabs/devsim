@@ -13,4 +13,15 @@ curl http://127.0.0.1:8000/api/demo/state
 devsim down
 ```
 
+The canonical managed preview path is:
+
+```bash
+devsim preview normal --seed 42 --json
+devsim preview status --json
+devsim preview stop --json
+```
+
+`normal` is a persistent preview profile. `active-session` remains a finite
+foreground scenario for focused scenario testing.
+
 The database lifecycle commands are intentionally ordinary project commands. The migration script applies the SQL in `migrations/001_initial.sql`; replace it with Alembic, Django migrations, or another migration tool without changing the DevSim contract.
