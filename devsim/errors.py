@@ -22,3 +22,15 @@ class LifecycleError(DevSimError):
 
 class ScenarioError(DevSimError):
     code = "scenario_error"
+
+
+class ContextError(ScenarioError):
+    code = "context_error"
+
+
+class ExpectationError(ScenarioError):
+    code = "scenario_assertion_failed"
+
+
+class ScenarioChangedError(ScenarioError):
+    code = "SCENARIO_CHANGED"

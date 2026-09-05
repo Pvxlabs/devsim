@@ -15,6 +15,18 @@ from devsim.rng import DeterministicRNG
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/missing":
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "missing"}).encode())
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"status": "ok"}).encode())
+
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length))
@@ -61,6 +73,25 @@ def test_http_adapter_reports_status_mismatch(tmp_path: Path) -> None:
                     {"method": "POST", "path": "/events", "json": {}, "expected_status": 200},
                 )
             )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_http_adapter_returns_expected_non_2xx_for_runner_assertion(tmp_path: Path) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = asyncio.run(
+            HTTPAdapter(f"http://127.0.0.1:{server.server_port}").execute(
+                context(tmp_path),
+                {"method": "GET", "path": "/missing"},
+            )
+        )
+        assert result.ok is False
+        assert result.data["status"] == 404
+        assert result.data["json"] == {"error": "missing"}
     finally:
         server.shutdown()
         thread.join(timeout=2)

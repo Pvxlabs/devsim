@@ -15,6 +15,8 @@ DevSim orchestrates a real development environment: database lifecycle commands,
 - virtual clock with an arbitrary positive speed
 - HTTP and command adapters
 - `.devsim/state.json` runtime metadata and JSON CLI output
+- `.devsim/runs/<run_id>.jsonl` redacted run artifacts
+- scenario expectations, step context, inspect, and replay identity
 - local development safety guard for reset, seed, and down operations
 
 ## Install
@@ -40,6 +42,9 @@ devsim status
 devsim status --json
 devsim scenario list --json
 devsim scenario run active-session --seed 42 --json
+devsim scenario inspect <run_id> --json
+devsim scenario replay <run_id> --json
+devsim scenario replay <run_id> --allow-changed-scenario --json
 devsim scenario stop
 devsim scenario reset
 devsim clock status
@@ -92,6 +97,8 @@ runtime:
 
 All project behavior is injected through commands and adapters. DevSim does not implement a migration framework and does not write runtime metadata into the application's database.
 
+The integration boundary is intentionally generic: an external project owns `devsim.yaml`, its seed command, its scenario files, and any helper commands. DevSim only executes those contracts. See [docs/integration.md](docs/integration.md), [docs/scenario-reference.md](docs/scenario-reference.md), and [docs/adapter-reference.md](docs/adapter-reference.md).
+
 ## Scenario DSL
 
 ```yaml
@@ -104,31 +111,42 @@ timeline:
   - at: 0s
     action: lifecycle.start
   - at: 5s
+    id: create-event
     action: api.request
     with:
       method: POST
       path: /api/demo/events
       json:
         type: session_started
-      expected_status: 201
+    expect:
+      status: 201
+      json:
+        status: processing
   - every: 1s
     until: 10s
     action: api.request
     with:
       method: POST
       path: /api/demo/heartbeat
-      expected_status: 200
+    expect:
+      status: 200
   - at: 11s
     action: lifecycle.complete
 ```
 
 `at` and `every` accept `ms`, `s`, and `m`. Repeating events begin at their interval and include the event at `until` when it lands exactly on the boundary. Events at the same virtual time are ordered by their timeline position.
 
+Every timeline item may provide an `id`; omitted IDs default to `step-<timeline index>`. Later items can reference earlier successful results with `${steps.<id>.*}`. `${env.NAME}` reads an environment variable and `${run.seed}` or `${run.run_id}` reads run metadata. A full placeholder preserves its native value; an embedded placeholder is rendered as text. Missing references fail the scenario clearly.
+
+`expect.status` and `expect.json` validate HTTP results. `expect.json` performs a nested mapping-subset comparison. `expect.exit_code` validates command results. `expected_status` remains accepted inside `api.request.with` for M0 compatibility; new scenarios should use `expect`.
+
 ## Determinism
 
 Every scenario run has a run-local `DeterministicRNG`, seeded from `--seed`. The state records the scenario name, canonical scenario hash, seed, run ID, scenario version, virtual start time, and event sequence. Adapter processes receive `DEVSIM_SEED`, `DEVSIM_RUN_ID`, `DEVSIM_PROJECT`, `DEVSIM_SCENARIO`, and `DEVSIM_VIRTUAL_TIME_MS`.
 
 The run ID and wall-clock timestamps are intentionally unique per invocation. Random values, schedule expansion, event ordering, and project-provided deterministic behavior are reproducible for the same scenario and seed.
+
+`devsim scenario inspect <run_id>` reads the JSONL artifact without changing the application. `devsim scenario replay <run_id>` re-runs the current scenario using the original seed. Replay compares the stored scenario hash with the current scenario and fails with `SCENARIO_CHANGED` unless `--allow-changed-scenario` is explicit. A replay always receives a new run ID.
 
 ## Safety
 

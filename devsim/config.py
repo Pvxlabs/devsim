@@ -106,6 +106,7 @@ def load_scenario(path: Path) -> Scenario:
     if not isinstance(raw_timeline, list):
         raise ConfigError(f"{path}: timeline must be a list")
     timeline: list[TimelineItem] = []
+    step_ids: set[str] = set()
     for index, raw in enumerate(raw_timeline):
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: timeline item {index} must be a mapping")
@@ -115,9 +116,19 @@ def load_scenario(path: Path) -> Scenario:
             raise ConfigError(f"{path}: timeline item {index} must contain exactly one of at/every")
         if not isinstance(raw.get("action"), str) or not raw["action"]:
             raise ConfigError(f"{path}: timeline item {index} requires action")
+        step_id = raw.get("id", f"step-{index}")
+        if not isinstance(step_id, str) or not step_id.strip():
+            raise ConfigError(f"{path}: timeline item {index}.id must be a non-empty string")
+        step_id = step_id.strip()
+        if step_id in step_ids:
+            raise ConfigError(f"{path}: duplicate timeline step id {step_id!r}")
+        step_ids.add(step_id)
         payload = raw.get("with", {})
         if not isinstance(payload, dict):
             raise ConfigError(f"{path}: timeline item {index}.with must be a mapping")
+        expect = raw.get("expect", {})
+        if not isinstance(expect, dict):
+            raise ConfigError(f"{path}: timeline item {index}.expect must be a mapping")
         at_ms = parse_optional_duration(raw.get("at"), f"timeline[{index}].at") if has_at else None
         every_ms = parse_optional_duration(raw.get("every"), f"timeline[{index}].every") if has_every else None
         until_ms = parse_optional_duration(raw.get("until"), f"timeline[{index}].until") if "until" in raw else None
@@ -129,7 +140,7 @@ def load_scenario(path: Path) -> Scenario:
             raise ConfigError(f"{path}: timeline item {index} cannot combine at and until")
         if has_every and until_ms is not None and until_ms < every_ms:
             raise ConfigError(f"{path}: timeline[{index}].until must be >= every")
-        timeline.append(TimelineItem(at_ms, every_ms, until_ms, raw["action"], payload, index))
+        timeline.append(TimelineItem(at_ms, every_ms, until_ms, raw["action"], payload, index, step_id, expect))
     return Scenario(
         version=1,
         name=name,

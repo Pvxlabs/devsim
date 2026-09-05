@@ -55,6 +55,7 @@ class HTTPAdapter:
                 "url": url,
                 "status": actual_status,
                 "headers": response_headers,
+                "json": response_body,
                 "body": response_body,
             },
         )

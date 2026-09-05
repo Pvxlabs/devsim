@@ -47,3 +47,46 @@ database: {engine: sqlite}
     )
     with pytest.raises(ConfigError, match="only database.engine=postgres"):
         load_manifest(tmp_path)
+
+
+def test_scenario_step_ids_and_expectations_are_compatible(tmp_path: Path) -> None:
+    from devsim.config import load_scenario
+
+    path = tmp_path / "scenario.yaml"
+    path.write_text(
+        """version: 1
+name: ids
+timeline:
+  - at: 0s
+    action: command.run
+    expect: {exit_code: 0}
+    with: {command: true}
+""",
+        encoding="utf-8",
+    )
+    scenario = load_scenario(path)
+    assert scenario.timeline[0].step_id == "step-0"
+    assert scenario.timeline[0].expect == {"exit_code": 0}
+
+
+def test_scenario_rejects_duplicate_step_ids(tmp_path: Path) -> None:
+    from devsim.config import load_scenario
+
+    path = tmp_path / "scenario.yaml"
+    path.write_text(
+        """version: 1
+name: duplicate
+timeline:
+  - at: 0s
+    id: same
+    action: command.run
+    with: {command: true}
+  - at: 1s
+    id: same
+    action: command.run
+    with: {command: true}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate timeline step id"):
+        load_scenario(path)

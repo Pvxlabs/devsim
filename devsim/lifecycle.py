@@ -15,7 +15,7 @@ class Lifecycle:
         self.project_dir = project_dir
         self.manifest = manifest
         self.state_store = state_store
-        self.command_adapter = CommandAdapter(project_dir)
+        self.command_adapter = CommandAdapter(project_dir, raise_on_failure=True)
 
     def run(self, operation: str, *, seed: int = 0) -> RuntimeState:
         assert_safe(self.manifest, operation)

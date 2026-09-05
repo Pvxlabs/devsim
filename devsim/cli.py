@@ -8,7 +8,7 @@ from typing import Any
 
 from . import __version__
 from .config import discover_scenarios, load_manifest
-from .errors import DevSimError
+from .errors import DevSimError, ScenarioChangedError, ScenarioError
 from .lifecycle import Lifecycle
 from .runner import ScenarioRunner
 from .state import StateStore
@@ -41,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(scenario_stop)
     scenario_reset = scenario_sub.add_parser("reset")
     _add_json_flag(scenario_reset)
+    scenario_inspect = scenario_sub.add_parser("inspect")
+    _add_json_flag(scenario_inspect)
+    scenario_inspect.add_argument("run_id")
+    scenario_replay = scenario_sub.add_parser("replay")
+    _add_json_flag(scenario_replay)
+    scenario_replay.add_argument("run_id")
+    scenario_replay.add_argument("--allow-changed-scenario", action="store_true")
     clock = subparsers.add_parser("clock")
     _add_json_flag(clock)
     clock_sub = clock.add_subparsers(dest="clock_command", required=True)
@@ -99,6 +106,33 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
                 manifest.adapter_types,
             ).run(scenarios[args.name], args.seed)
             return {"ok": True, "scenario": args.name, "state": state.to_dict()}
+        if args.scenario_command == "inspect":
+            return inspect_run(store, args.run_id)
+        if args.scenario_command == "replay":
+            events = store.read_run_events(args.run_id)
+            identity = _run_identity(events, args.run_id)
+            scenarios = {item.name: item for item in discover_scenarios(project_dir, manifest)}
+            scenario = scenarios.get(identity["scenario"])
+            if scenario is None:
+                raise ScenarioError(f"scenario {identity['scenario']!r} from run {args.run_id!r} was not found")
+            if scenario.content_hash != identity["scenario_hash"] and not args.allow_changed_scenario:
+                raise ScenarioChangedError(
+                    f"scenario {scenario.name!r} changed: run has {identity['scenario_hash']}, current is {scenario.content_hash}"
+                )
+            state = ScenarioRunner(
+                project_dir,
+                manifest.project_name,
+                manifest.base_url,
+                store,
+                manifest.adapter_types,
+            ).run(scenario, identity["seed"])
+            return {
+                "ok": True,
+                "scenario": scenario.name,
+                "replay_of": args.run_id,
+                "allow_changed_scenario": args.allow_changed_scenario,
+                "state": state.to_dict(),
+            }
         if args.scenario_command == "stop":
             state = store.load(manifest.project_name)
             if state.status == "running":
@@ -121,6 +155,39 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             },
         }
     raise DevSimError("unknown command")
+
+
+def inspect_run(store: StateStore, run_id: str) -> dict[str, Any]:
+    events = store.read_run_events(run_id)
+    identity = _run_identity(events, run_id)
+    terminal = [event for event in events if event.get("status") in {"completed", "failed"}]
+    completed = next((event for event in reversed(terminal) if event.get("status") == "completed"), None)
+    failed = next((event for event in reversed(terminal) if event.get("status") == "failed"), None)
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "scenario": identity["scenario"],
+        "scenario_hash": identity["scenario_hash"],
+        "seed": identity["seed"],
+        "event_count": len(terminal),
+        "raw_event_count": len(events),
+        "started": events[0].get("real_time") if events else None,
+        "completed": completed is not None and failed is None,
+        "failed": failed is not None,
+        "completed_at": completed.get("real_time") if completed else None,
+        "failed_at": failed.get("real_time") if failed else None,
+    }
+
+
+def _run_identity(events: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+    if not events:
+        raise ScenarioError(f"run artifact {run_id!r} is empty")
+    event = events[0]
+    required = ("scenario", "scenario_hash", "seed")
+    missing = [key for key in required if key not in event]
+    if missing:
+        raise ScenarioError(f"run artifact {run_id!r} lacks scenario identity: {', '.join(missing)}")
+    return {key: event[key] for key in required}
 
 
 def init_project(project_dir: Path) -> dict[str, Any]:
@@ -161,5 +228,7 @@ def emit(value: dict[str, Any], json_output: bool) -> None:
     elif "clock" in value:
         clock = value["clock"]
         print(f"clock: {clock['status']} at {clock['virtual_time_ms']}ms ({clock['speed']}x)")
+    elif "event_count" in value:
+        print(f"{value['scenario']}: {value['event_count']} events ({'failed' if value['failed'] else 'completed' if value['completed'] else 'incomplete'})")
     else:
         print("ok")

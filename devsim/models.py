@@ -33,6 +33,8 @@ class TimelineItem:
     action: str
     payload: dict[str, Any]
     index: int
+    step_id: str
+    expect: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ class ScheduledEvent:
     occurrence: int
     action: str
     payload: dict[str, Any]
+    step_id: str = ""
+    expect: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,6 +68,17 @@ class ActionContext:
     virtual_ms: int
     event_sequence: int
     rng: Any
+    steps: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def run(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "scenario": self.scenario_name,
+            "seed": self.seed,
+            "virtual_time_ms": self.virtual_ms,
+            "event_sequence": self.event_sequence,
+        }
 
 
 @dataclass

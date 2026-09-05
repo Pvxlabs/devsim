@@ -14,8 +14,9 @@ from ..models import ActionContext, ActionResult
 class CommandAdapter:
     name = "command"
 
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, *, raise_on_failure: bool = True):
         self.project_dir = project_dir
+        self.raise_on_failure = raise_on_failure
 
     async def execute(self, context: ActionContext, payload: dict[str, Any]) -> ActionResult:
         command = payload.get("command")
@@ -63,12 +64,13 @@ class CommandAdapter:
             ok=completed.returncode == 0,
             data={
                 "command": command,
+                "exit_code": completed.returncode,
                 "returncode": completed.returncode,
                 "stdout": completed.stdout,
                 "stderr": completed.stderr,
             },
         )
-        if not result.ok:
+        if not result.ok and self.raise_on_failure:
             raise AdapterError(
                 f"command exited with code {completed.returncode}: {command}\n{completed.stderr.strip()}".strip()
             )

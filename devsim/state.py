@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .context import environment_secret_values
+from .errors import ScenarioError
 from .models import RuntimeState
+from .redaction import redact
 
 
 class StateStore:
@@ -28,11 +33,36 @@ class StateStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self._atomic_write(self.path, state.to_dict())
 
-    def save_run_event(self, run_id: str, event: dict[str, Any]) -> None:
+    def save_run_event(self, run_id: str, event: dict[str, Any], *, secret_values: Iterable[str] = ()) -> None:
         self.runs_dir.mkdir(parents=True, exist_ok=True)
-        path = self.runs_dir / f"{run_id}.jsonl"
+        path = self.run_path(run_id)
+        safe_event = redact(event, set(environment_secret_values()) | {str(value) for value in secret_values})
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.write(json.dumps(safe_event, sort_keys=True, separators=(",", ":")) + "\n")
+
+    def run_path(self, run_id: str) -> Path:
+        if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id):
+            raise ScenarioError(f"invalid run id {run_id!r}")
+        return self.runs_dir / f"{run_id}.jsonl"
+
+    def read_run_events(self, run_id: str) -> list[dict[str, Any]]:
+        path = self.run_path(run_id)
+        if not path.exists():
+            raise ScenarioError(f"run artifact {run_id!r} was not found")
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise ScenarioError(f"cannot read run artifact {run_id!r}: {exc}") from exc
+        events: list[dict[str, Any]] = []
+        for line_number, line in enumerate(lines, start=1):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ScenarioError(f"invalid JSON in run artifact {run_id!r} at line {line_number}") from exc
+            if not isinstance(event, dict):
+                raise ScenarioError(f"run artifact {run_id!r} line {line_number} is not an object")
+            events.append(event)
+        return events
 
     def reset_runtime(self, project: str) -> RuntimeState:
         state = RuntimeState(project=project, last_operation="scenario.reset")
