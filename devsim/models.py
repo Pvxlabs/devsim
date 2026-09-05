@@ -23,6 +23,10 @@ class Manifest:
     scenarios_path: str
     base_url: str
     adapter_types: tuple[str, ...]
+    seed_config: dict[str, Any] = field(default_factory=dict)
+    presets: dict[str, Any] = field(default_factory=dict)
+    observation: dict[str, Any] = field(default_factory=dict)
+    database_url: str | None = None
 
 
 @dataclass(frozen=True)

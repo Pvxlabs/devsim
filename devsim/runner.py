@@ -7,7 +7,7 @@ import heapq
 from pathlib import Path
 from typing import Any
 
-from .adapters import AdapterRegistry, CommandAdapter, HTTPAdapter, LifecycleAdapter, ContextAdapter, ValueAdapter, WebSocketAdapter
+from .adapters import AdapterRegistry, BrowserAdapter, CommandAdapter, HTTPAdapter, LifecycleAdapter, ContextAdapter, ValueAdapter, WebSocketAdapter
 from .assertions import assert_expectations, expectation_accepts_result
 from .clock import VirtualClock, utc_now
 from .context import collect_secret_values, normalize_result, resolve
@@ -27,6 +27,7 @@ class ScenarioRunner:
         base_url: str,
         state_store: StateStore,
         adapter_types: tuple[str, ...] = ("http", "command"),
+        observation: dict[str, Any] | None = None,
     ):
         self.project_dir = project_dir
         self.project = project
@@ -43,6 +44,13 @@ class ScenarioRunner:
         self.registry.register("context.unset", ContextAdapter("context.unset"))
         self.registry.register("value.generate", ValueAdapter())
         self.registry.register("websocket.expect", WebSocketAdapter())
+        if "browser" in adapter_types or observation:
+            browser_config = observation or {}
+            if not isinstance(browser_config.get("browser"), dict):
+                raise AdapterError("BROWSER_OBSERVATION_CONFIG_REQUIRED: observation.browser must be configured")
+            browser = BrowserAdapter(project_dir, base_url, browser_config)
+            for action in ("browser.open", "browser.expect", "browser.screenshot", "browser.click"):
+                self.registry.register(action, browser)
 
     def run(self, scenario: Scenario, seed: int, **kwargs: Any) -> RuntimeState:
         return asyncio.run(self._run(scenario, seed, **kwargs))
@@ -161,6 +169,7 @@ class ScenarioRunner:
                 context.virtual_ms = event.virtual_ms
                 context.event_sequence = state.event_sequence
                 adapter = self.registry.resolve(event.action)
+                context.values["_devsim_browser_action"] = event.action
                 resolved_payload = resolve(event.payload, context)
                 resolved_expect = resolve(event.expect, context)
                 secret_values = (
@@ -260,6 +269,8 @@ class ScenarioRunner:
                 if ownership.lock_path.is_dir():
                     ownership.lock_path.rmdir()
             raise
+        finally:
+            await self.registry.close()
         return self.state_store.load(self.project)
 
     @staticmethod

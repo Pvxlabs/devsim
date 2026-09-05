@@ -18,6 +18,8 @@ DevSim orchestrates a real development environment: database lifecycle commands,
 - `.devsim/runs/<run_id>.jsonl` redacted run artifacts
 - scenario expectations, step context, inspect, and replay identity
 - local development safety guard for reset, seed, and down operations
+- schema-aware PostgreSQL seed planning with deterministic generators and profiles
+- local preview control API/UI and optional browser observation screenshots
 
 ## M2 Persistent Runtime
 
@@ -74,6 +76,11 @@ devsim scenario replay <run_id> --allow-changed-scenario --json
 devsim scenario stop
 devsim scenario reset
 devsim clock status
+devsim seed plan --json
+devsim seed validate --json
+devsim schema inspect --json
+devsim serve
+devsim preview normal --seed 42
 devsim down
 ```
 
@@ -90,6 +97,18 @@ devsim down
 ```
 
 `devsim reset` is deliberately strict: it runs the configured reset, migrate, and seed commands in that order. A failed step stops the operation and writes a failed state with a structured error.
+
+For a project with a configured preview preset, the normal daily workflow is:
+
+```bash
+devsim preview normal --seed 42
+devsim serve
+```
+
+Open the application to watch real state evolve. Use the control UI to inspect the
+runtime, replay a seed, and pause or resume the scenario. `devsim preview` resets
+the configured local database, applies the selected seed profile, and starts the
+managed scenario; it never targets production.
 
 ## Manifest
 
@@ -122,6 +141,32 @@ runtime:
 ```
 
 All project behavior is injected through commands and adapters. DevSim does not implement a migration framework and does not write runtime metadata into the application's database.
+
+### Schema-aware seed mode
+
+Custom seed commands remain supported. Projects that opt in to schema-aware mode
+declare a local PostgreSQL URL, a table plan, and optional profiles:
+
+```yaml
+seed:
+  mode: schema
+  schema:
+    database_url: ${env.DEVSIM_DATABASE_URL}
+  plan:
+    tables:
+      accounts:
+        count: 10
+        columns:
+          email: {generator: internet.email}
+  profiles:
+    minimal: {accounts: 1}
+    normal: {accounts: 10}
+```
+
+Run `devsim seed plan` or `devsim seed validate` before mutation. DevSim reads
+only the configured development database, orders tables by foreign-key dependency,
+assigns relationships deterministically, and fails with `CYCLIC_SEED_DEPENDENCY`
+or `SEED_SCHEMA_DRIFT` when the contract cannot be applied safely.
 
 The integration boundary is intentionally generic: an external project owns `devsim.yaml`, its seed command, its scenario files, and any helper commands. DevSim only executes those contracts. See [docs/integration.md](docs/integration.md), [docs/scenario-reference.md](docs/scenario-reference.md), and [docs/adapter-reference.md](docs/adapter-reference.md).
 

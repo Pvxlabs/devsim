@@ -26,3 +26,7 @@ runtime:
   adapters:
     - type: http
     - type: command
+presets:
+  normal:
+    seed_profile: default
+    scenario: active-session

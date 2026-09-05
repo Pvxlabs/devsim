@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import uuid
+import webbrowser
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,6 @@ from . import __version__
 from .config import discover_scenarios, load_manifest
 from .errors import DevSimError, ScenarioChangedError, ScenarioError
 from .lifecycle import Lifecycle
-from .runner import ScenarioRunner
 from .state import StateStore
 from .clock import utc_now
 from .runner import ScenarioRunner
@@ -30,11 +30,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     init = subparsers.add_parser("init")
     _add_json_flag(init)
+    init.add_argument("--inspect-postgres", action="store_true", help="inspect a configured local PostgreSQL database after initialization")
     for name in ("up", "down", "reset", "seed", "status"):
         command = subparsers.add_parser(name)
         _add_json_flag(command)
         if name in {"reset", "seed"}:
             command.add_argument("--seed", type=int, default=0)
+            command.add_argument("--profile", default="default")
+        if name == "seed":
+            command.add_argument("seed_command", nargs="?", choices=("plan", "validate"))
     doctor = subparsers.add_parser("doctor")
     _add_json_flag(doctor)
     scenario = subparsers.add_parser("scenario")
@@ -76,6 +80,23 @@ def build_parser() -> argparse.ArgumentParser:
     clock_sub = clock.add_subparsers(dest="clock_command", required=True)
     clock_status = clock_sub.add_parser("status")
     _add_json_flag(clock_status)
+    schema = subparsers.add_parser("schema")
+    _add_json_flag(schema)
+    schema_sub = schema.add_subparsers(dest="schema_command", required=True)
+    schema_inspect = schema_sub.add_parser("inspect")
+    _add_json_flag(schema_inspect)
+    seed_plan = subparsers.add_parser("seed-plan", help=argparse.SUPPRESS)
+    _add_json_flag(seed_plan)
+    serve = subparsers.add_parser("serve")
+    _add_json_flag(serve)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8001)
+    serve.add_argument("--token")
+    preview = subparsers.add_parser("preview")
+    _add_json_flag(preview)
+    preview.add_argument("profile")
+    preview.add_argument("--seed", type=int, default=0)
+    preview.add_argument("--open", action="store_true")
     return parser
 
 
@@ -99,12 +120,21 @@ def main(argv: list[str] | None = None) -> None:
 def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = args.project_dir.resolve()
     if args.command == "init":
-        return init_project(project_dir)
+        return init_project(project_dir, inspect_postgres=getattr(args, "inspect_postgres", False))
     manifest = load_manifest(project_dir)
     store = StateStore(project_dir)
     ownership = RuntimeOwnership(project_dir)
     if args.command in {"up", "down", "reset", "seed"}:
-        state = Lifecycle(project_dir, manifest, store).run(args.command, seed=getattr(args, "seed", 0))
+        if args.command == "seed" and getattr(args, "seed_command", None) in {"plan", "validate"}:
+            from .seed import database_url_for, build_seed_plan, schema_seed_config
+            from .schema import inspect_postgres
+
+            schema = inspect_postgres(database_url_for(manifest))
+            plan = build_seed_plan(schema, schema_seed_config(manifest), getattr(args, "profile", "default"))
+            return {"ok": True, "operation": f"seed.{args.seed_command}", "plan": plan.to_dict()}
+        state = Lifecycle(project_dir, manifest, store).run(
+            args.command, seed=getattr(args, "seed", 0), profile=getattr(args, "profile", "default")
+        )
         return {"ok": True, "operation": args.command, "state": state.to_dict()}
     if args.command == "status":
         return status_result(project_dir, manifest, store, ownership)
@@ -130,6 +160,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
                 manifest.base_url,
                 store,
                 manifest.adapter_types,
+                manifest.observation,
             ).run(scenarios[args.name], args.seed)
             return {"ok": True, "scenario": args.name, "state": state.to_dict()}
         if args.scenario_command == "start":
@@ -139,26 +170,11 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             scenario = scenarios[args.name]
             if scenario.runtime_mode != "persistent":
                 raise ScenarioError(f"scenario {args.name!r} is finite; use scenario run")
-            current = ownership.status()
-            if current and current.get("status") in {"RUNNING", "PAUSED", "STARTING"} and current.get("process_alive"):
-                raise ScenarioError(f"runtime is already running (run {current.get('run_id')})")
-            run_id = str(uuid.uuid4())
-            command = [sys.executable, "-m", "devsim.runtime_process", "--project-dir", str(project_dir), "--scenario", args.name, "--seed", str(args.seed), "--run-id", run_id]
-            if args.max_events is not None:
-                command += ["--max-events", str(args.max_events)]
-            if args.max_duration:
-                from .timeparse import parse_duration
-                command += ["--max-duration-ms", str(parse_duration(args.max_duration, field="--max-duration", allow_hours=True))]
-            ownership.claim({"run_id": run_id, "pid": 0, "scenario": scenario.name, "scenario_hash": scenario.content_hash, "seed": args.seed, "status": "STARTING"})
-            state = store.load(manifest.project_name)
-            state.status = "running"; state.scenario = scenario.name; state.seed = args.seed; state.run_id = run_id; state.scenario_hash = scenario.content_hash; state.scenario_version = scenario.version; state.started_at = utc_now(); state.clock_speed = scenario.speed; state.last_operation = "scenario.start"; state.heartbeat = utc_now(); store.save(state)
-            try:
-                process = subprocess.Popen(command, cwd=project_dir, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            except OSError:
-                ownership.clear()
-                raise
-            ownership.update(pid=process.pid)
-            return {"ok": True, "operation": "scenario.start", "scenario": scenario.name, "run_id": run_id, "pid": process.pid, "state": state.to_dict()}
+            started = _start_managed_scenario(
+                project_dir, manifest, store, ownership, scenario, args.seed,
+                max_events=args.max_events, max_duration=args.max_duration,
+            )
+            return {"ok": True, "operation": "scenario.start", **started}
         if args.scenario_command == "inspect":
             return inspect_run(store, args.run_id)
         if args.scenario_command == "replay":
@@ -178,6 +194,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
                 manifest.base_url,
                 store,
                 manifest.adapter_types,
+                manifest.observation,
             ).run(scenario, identity["seed"])
             return {
                 "ok": True,
@@ -208,6 +225,46 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         state = store.reset_runtime(manifest.project_name)
         ownership.clear()
         return {"ok": True, "operation": "scenario.reset", "state": state.to_dict()}
+    if args.command == "schema" and args.schema_command == "inspect":
+        from .seed import database_url_for
+        from .schema import inspect_postgres
+
+        return {"ok": True, "schema": inspect_postgres(database_url_for(manifest)).to_dict()}
+    if args.command == "serve":
+        from .control import serve
+
+        return serve(project_dir, manifest, host=args.host, port=args.port, token=args.token)
+    if args.command == "preview":
+        preset = manifest.presets.get(args.profile)
+        if not isinstance(preset, dict):
+            raise DevSimError(f"preview preset {args.profile!r} was not found")
+        seed_profile = str(preset.get("seed_profile", args.profile))
+        scenario_name = preset.get("scenario")
+        if not isinstance(scenario_name, str) or not scenario_name:
+            raise DevSimError(f"preview preset {args.profile!r} requires scenario")
+        Lifecycle(project_dir, manifest, store).run("reset", seed=args.seed, profile=seed_profile)
+        scenarios = {item.name: item for item in discover_scenarios(project_dir, manifest)}
+        scenario = scenarios.get(scenario_name)
+        if scenario is None:
+            raise DevSimError(f"scenario {scenario_name!r} was not found")
+        if scenario.runtime_mode != "persistent":
+            raise ScenarioError(f"preview scenario {scenario_name!r} must be persistent")
+        started = _start_managed_scenario(project_dir, manifest, store, ownership, scenario, args.seed)
+        result = {
+            "ok": True,
+            "operation": "preview",
+            "profile": args.profile,
+            "seed_profile": seed_profile,
+            "scenario": scenario_name,
+            "seed": args.seed,
+            "runtime": started,
+            "control_url": f"http://127.0.0.1:8001",
+            "application_url": manifest.base_url,
+            "open_requested": args.open,
+        }
+        if args.open:
+            webbrowser.open(manifest.base_url)
+        return result
     if args.command == "clock" and args.clock_command == "status":
         state = store.load(manifest.project_name)
         return {
@@ -221,6 +278,29 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             },
         }
     raise DevSimError("unknown command")
+
+
+def _start_managed_scenario(project_dir: Path, manifest, store: StateStore, ownership: RuntimeOwnership, scenario, seed: int, *, max_events: int | None = None, max_duration: str | None = None) -> dict[str, Any]:
+    current = ownership.status()
+    if current and current.get("status") in {"RUNNING", "PAUSED", "STARTING"} and current.get("process_alive"):
+        raise ScenarioError(f"runtime is already running (run {current.get('run_id')})")
+    run_id = str(uuid.uuid4())
+    command = [sys.executable, "-m", "devsim.runtime_process", "--project-dir", str(project_dir), "--scenario", scenario.name, "--seed", str(seed), "--run-id", run_id]
+    if max_events is not None:
+        command += ["--max-events", str(max_events)]
+    if max_duration:
+        from .timeparse import parse_duration
+        command += ["--max-duration-ms", str(parse_duration(max_duration, field="--max-duration", allow_hours=True))]
+    ownership.claim({"run_id": run_id, "pid": 0, "scenario": scenario.name, "scenario_hash": scenario.content_hash, "seed": seed, "status": "STARTING"})
+    state = store.load(manifest.project_name)
+    state.status = "running"; state.scenario = scenario.name; state.seed = seed; state.run_id = run_id; state.scenario_hash = scenario.content_hash; state.scenario_version = scenario.version; state.started_at = utc_now(); state.clock_speed = scenario.speed; state.last_operation = "preview"; state.heartbeat = utc_now(); store.save(state)
+    try:
+        process = subprocess.Popen(command, cwd=project_dir, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        ownership.clear()
+        raise
+    ownership.update(pid=process.pid)
+    return {"status": state.status, "run_id": run_id, "pid": process.pid, "scenario": scenario.name, "seed": seed, "state": state.to_dict()}
 
 
 def inspect_run(store: StateStore, run_id: str) -> dict[str, Any]:
@@ -306,7 +386,14 @@ def validate_scenarios(project_dir: Path, manifest, name: str | None, all_scenar
     errors: list[dict[str, str]] = []
     for scenario in scenarios:
         try:
-            runner = ScenarioRunner(project_dir, manifest.project_name, manifest.base_url, StateStore(project_dir), manifest.adapter_types)
+            runner = ScenarioRunner(
+                project_dir,
+                manifest.project_name,
+                manifest.base_url,
+                StateStore(project_dir),
+                manifest.adapter_types,
+                manifest.observation,
+            )
             for item in scenario.timeline:
                 if item.action not in runner.registry.actions():
                     raise ScenarioError(f"action adapter {item.action!r} is not registered")
@@ -326,7 +413,7 @@ def _run_identity(events: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     return {key: event[key] for key in required}
 
 
-def init_project(project_dir: Path) -> dict[str, Any]:
+def init_project(project_dir: Path, *, inspect_postgres: bool = False) -> dict[str, Any]:
     project_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = project_dir / "devsim.yaml"
     if manifest_path.exists():
@@ -338,12 +425,34 @@ def init_project(project_dir: Path) -> dict[str, Any]:
     StateStore(project_dir).directory.mkdir(parents=True, exist_ok=True)
     scenarios_dir = project_dir / "devsim" / "scenarios"
     scenarios_dir.mkdir(parents=True, exist_ok=True)
+    seed_draft = project_dir / "devsim" / "seed.yaml"
+    if not seed_draft.exists():
+        seed_draft.write_text(
+            """# Generated draft. Enable with `seed: {mode: schema, ...}` in devsim.yaml.
+# The database schema determines structure; this file documents semantic intent.
+mode: schema
+schema:
+  database_url: ${env.DEVSIM_DATABASE_URL}
+plan:
+  tables: {}
+profiles:
+  minimal: {}
+""",
+            encoding="utf-8",
+        )
     gitignore_path = project_dir / ".gitignore"
     existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
     if ".devsim/" not in {line.strip() for line in existing.splitlines()}:
         separator = "" if not existing or existing.endswith("\n") else "\n"
         gitignore_path.write_text(f"{existing}{separator}.devsim/\n", encoding="utf-8")
-    return {"ok": True, "initialized": str(manifest_path)}
+    result: dict[str, Any] = {"ok": True, "initialized": str(manifest_path), "seed_draft": str(seed_draft)}
+    if inspect_postgres:
+        manifest = load_manifest(project_dir)
+        from .seed import database_url_for
+        from .schema import inspect_postgres as inspect_schema
+
+        result["schema"] = inspect_schema(database_url_for(manifest)).to_dict()
+    return result
 
 
 def emit(value: dict[str, Any], json_output: bool) -> None:

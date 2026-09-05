@@ -17,18 +17,18 @@ class Lifecycle:
         self.state_store = state_store
         self.command_adapter = CommandAdapter(project_dir, raise_on_failure=True)
 
-    def run(self, operation: str, *, seed: int = 0) -> RuntimeState:
+    def run(self, operation: str, *, seed: int = 0, profile: str = "default") -> RuntimeState:
         assert_safe(self.manifest, operation)
         if operation == "reset":
             for step in ("reset", "migrate"):
                 self._run_step(step, seed)
-            self._run_seed(seed)
+            self._run_seed(seed, profile)
             state = self.state_store.reset_runtime(self.manifest.project_name)
             state.last_operation = "reset"
             self.state_store.save(state)
             return state
         if operation == "seed":
-            self._run_seed(seed)
+            self._run_seed(seed, profile)
             state = self.state_store.load(self.manifest.project_name)
             state.status = "seeded"
             state.seed = seed
@@ -44,26 +44,31 @@ class Lifecycle:
         self.state_store.save(state)
         return state
 
-    def _run_seed(self, seed: int) -> None:
+    def _run_seed(self, seed: int, profile: str) -> None:
+        if self.manifest.seed_config:
+            from .seed import execute_seed
+
+            execute_seed(self.manifest, seed=seed, profile=profile)
+            return
         if self.manifest.seed_command is None:
             return
         run_id = str(uuid.uuid4())
         spec = self.manifest.seed_command
-        self._run_command(spec, seed, run_id, "seed")
+        self._run_command(spec, seed, run_id, "seed", profile=profile)
 
     def _run_step(self, operation: str, seed: int) -> None:
         if operation not in self.manifest.lifecycle:
             raise LifecycleError(f"no lifecycle command configured for {operation}")
         self._run_command(self.manifest.lifecycle[operation], seed, str(uuid.uuid4()), operation)
 
-    def _run_command(self, spec: CommandSpec, seed: int, run_id: str, operation: str) -> None:
+    def _run_command(self, spec: CommandSpec, seed: int, run_id: str, operation: str, *, profile: str | None = None) -> None:
         import asyncio
 
         try:
             asyncio.run(
                 self.command_adapter.execute(
                     _context(self.project_dir, run_id, self.manifest.project_name, seed),
-                    {"command": spec.command, "timeout": spec.timeout, "env": spec.env, "cwd": spec.cwd or str(self.project_dir)},
+                    {"command": spec.command, "timeout": spec.timeout, "env": {**spec.env, **({"DEVSIM_SEED_PROFILE": profile} if profile else {})}, "cwd": spec.cwd or str(self.project_dir)},
                 )
             )
         except Exception as exc:

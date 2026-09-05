@@ -59,7 +59,12 @@ def load_manifest(project_dir: Path) -> Manifest:
     lifecycle_data = _mapping(database.get("lifecycle"), "database.lifecycle")
     lifecycle = {name: _command(value, f"database.lifecycle.{name}") for name, value in lifecycle_data.items()}
     seed_data = data.get("seed")
-    seed_command = _command(seed_data, "seed") if seed_data is not None else None
+    seed_command = None
+    seed_config: dict[str, Any] = {}
+    if isinstance(seed_data, str) or (isinstance(seed_data, dict) and "command" in seed_data):
+        seed_command = _command(seed_data, "seed")
+    elif seed_data is not None:
+        seed_config = _mapping(seed_data, "seed")
     scenarios = _mapping(data.get("scenarios"), "scenarios")
     runtime = _mapping(data.get("runtime"), "runtime")
     adapters = runtime.get("adapters", [{"type": "http"}, {"type": "command"}])
@@ -80,6 +85,10 @@ def load_manifest(project_dir: Path) -> Manifest:
         scenarios_path=str(scenarios.get("path", "devsim/scenarios")),
         base_url=str(runtime.get("base_url", "http://127.0.0.1:8000")),
         adapter_types=tuple(adapter_types),
+        seed_config=seed_config,
+        presets=_mapping(data.get("presets"), "presets"),
+        observation=_mapping(data.get("observation"), "observation"),
+        database_url=str(database["url"]) if database.get("url") is not None else None,
     )
 
 

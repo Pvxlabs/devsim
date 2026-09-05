@@ -34,3 +34,26 @@ def assert_safe(manifest: Manifest, operation: str) -> None:
     suspicious = host and any(token in host.lower().split(".") for token in ("prod", "production", "live"))
     if not _is_safe_host(host) or suspicious:
         raise SafetyError(f"refusing {operation}: runtime.base_url {manifest.base_url!r} is not a local/private development endpoint")
+
+
+def assert_database_url_safe(database_url: str) -> None:
+    """Reject production-looking schema/seed targets before opening a connection."""
+    parsed = urlparse(database_url.replace("postgresql+psycopg://", "postgresql://", 1))
+    if parsed.scheme not in {"postgresql", "postgres", "postgresql+psycopg"} or not parsed.hostname:
+        raise SafetyError(f"SEED_TARGET_UNSAFE: invalid PostgreSQL URL {database_url!r}")
+    host = parsed.hostname
+    database = parsed.path.lstrip("/").lower()
+    suspicious = any(token in host.lower().split(".") for token in ("prod", "production", "live")) or any(
+        token in database.split("-") for token in ("prod", "production", "live")
+    )
+    if suspicious or not _is_safe_host(host):
+        raise SafetyError(f"SEED_TARGET_UNSAFE: PostgreSQL target {host}/{database} is not local/private development")
+
+
+def assert_observation_url_safe(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not _is_safe_host(parsed.hostname):
+        raise SafetyError(f"BROWSER_TARGET_UNSAFE: observation URL {url!r} is not local/private development")
+    host = (parsed.hostname or "").lower()
+    if any(token in host.split(".") for token in ("prod", "production", "live")):
+        raise SafetyError(f"BROWSER_TARGET_UNSAFE: observation URL {url!r} looks like production")

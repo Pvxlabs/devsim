@@ -55,3 +55,11 @@ class AdapterRegistry:
 
     def actions(self) -> tuple[str, ...]:
         return tuple(sorted(self._actions))
+
+    async def close(self) -> None:
+        for adapter in set(self._actions.values()):
+            close = getattr(adapter, "close", None)
+            if close is not None:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
