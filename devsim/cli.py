@@ -22,8 +22,18 @@ from .state import StateStore
 from .clock import utc_now
 from .runner import ScenarioRunner
 from .runtime import RuntimeOwnership
-from .product import capabilities as capabilities_result
-from .product import detect_project, init_plan, inspect_draft, project_status, validate_project
+from .product import (
+    capabilities as capabilities_result,
+    detect_project,
+    init_plan,
+    inspect_draft,
+    inspect_project,
+    onboard_apply,
+    onboard_plan,
+    onboard_validate,
+    project_status,
+    validate_project,
+)
 
 
 _STABLE_ERROR_CODES = {
@@ -65,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(capabilities)
     quickstart = subparsers.add_parser("quickstart", help="show the canonical project integration workflow")
     _add_json_flag(quickstart)
+    onboard = subparsers.add_parser("onboard", help="analyze and prepare a DevSim integration")
+    _add_json_flag(onboard)
+    onboard_mode = onboard.add_mutually_exclusive_group()
+    onboard_mode.add_argument("--inspect", action="store_true", help="read-only project inspection")
+    onboard_mode.add_argument("--plan", action="store_true", help="read-only integration plan")
+    onboard_mode.add_argument("--apply", action="store_true", help="apply only the safe standard scaffold")
+    onboard_mode.add_argument("--validate", action="store_true", help="qualify the current integration")
     skill = subparsers.add_parser("skill", help="install the DevSim agent skill into Codex's standard skill directory")
     _add_json_flag(skill)
     skill_sub = skill.add_subparsers(dest="skill_command", required=True)
@@ -273,6 +290,27 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
                 "devsim preview normal --seed 42 --json",
             ],
             "note": "quickstart is informational and does not modify files or start a runtime",
+        }
+    if args.command == "onboard":
+        if getattr(args, "inspect", False):
+            return inspect_project(project_dir)
+        if getattr(args, "plan", False):
+            return onboard_plan(project_dir)
+        if getattr(args, "apply", False):
+            return onboard_apply(project_dir)
+        if getattr(args, "validate", False):
+            return onboard_validate(project_dir)
+        applied = onboard_apply(project_dir)
+        if applied.get("ok") is False:
+            return applied
+        validation = onboard_validate(project_dir)
+        return {
+            "ok": validation["ok"],
+            "operation": "onboard",
+            "inspection": inspect_project(project_dir),
+            "plan": applied["plan"],
+            "apply": applied,
+            "validation": validation,
         }
     if args.command == "skill":
         if args.skill_command == "install":
@@ -758,6 +796,28 @@ def emit(value: dict[str, Any], json_output: bool) -> None:
         print("GENERATED_DRAFT")
         print("REVIEW_REQUIRED")
         print(f"Draft: {value['draft_path']}")
+        return
+    if value.get("operation") == "onboard.plan":
+        print("ONBOARD_PLAN")
+        for step in value.get("steps", []):
+            print(f"{step['mode'].upper()} {step['capability']}: {step['action']}")
+        return
+    if value.get("operation") == "onboard.validate":
+        print(f"INTEGRATION={value.get('integration', 'INVALID')}")
+        for check in value.get("checks", []):
+            print(f"{check['name'].upper()}={check['status']}")
+        return
+    if value.get("operation") == "onboard.apply":
+        print("ONBOARD=SCAFFOLDED")
+        for item in value.get("scaffold", {}).get("created", []):
+            print(f"CREATE {item}")
+        return
+    if "detected" in value and "signals" in value:
+        print(f"PROJECT={value['project']['name']}")
+        print(f"INTEGRATION={value['integration']['status'].upper()}")
+        print(f"RUNTIME={','.join(value['detected']['runtime']) or 'UNKNOWN'}")
+        print(f"DATABASE={','.join(value['detected']['database']) or 'UNKNOWN'}")
+        print(f"FRAMEWORK={value['detected']['framework'] or 'UNKNOWN'}")
         return
     if "steps" in value and value.get("operation") != "init":
         for index, step in enumerate(value["steps"], start=1):

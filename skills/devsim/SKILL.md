@@ -21,6 +21,28 @@ devsim detect --json
 devsim project status --json
 ```
 
+## Project Onboarding
+
+When the repository is not fully integrated, use the bounded onboarding
+lifecycle before creating mock data:
+
+```bash
+devsim onboard --inspect --json
+devsim onboard --plan --json
+devsim onboard --apply --json
+```
+
+Only apply the safe scaffold. Complete `agent_required` plan steps by reading
+the real project's lifecycle, schema, API, and UI. Then qualify with:
+
+```bash
+devsim onboard --validate --json
+```
+
+DevSim must not guess business semantics, authentication, production config,
+or production credentials. Baseline DEV/Preview seeding may be direct;
+runtime evolution should use the real application path.
+
 ## Preflight And Execution
 
 ```bash

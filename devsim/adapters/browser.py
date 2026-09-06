@@ -16,8 +16,10 @@ class BrowserAdapter:
 
     def __init__(self, project_dir: Path, base_url: str, observation: dict[str, Any]):
         self.project_dir = project_dir
-        self.base_url = base_url.rstrip("/") + "/"
         self.observation = observation if isinstance(observation, dict) else {}
+        browser_config = self.observation.get("browser", {}) if isinstance(self.observation.get("browser"), dict) else {}
+        configured_base_url = browser_config.get("base_url")
+        self.base_url = str(configured_base_url or base_url).rstrip("/") + "/"
         self._playwright = None
         self._browser = None
         self._context = None

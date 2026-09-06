@@ -17,6 +17,32 @@ Observe:    devsim preview status --json
 Shutdown:   devsim preview stop --json
 ```
 
+## Project Onboarding
+
+When a repository is not yet fully integrated, an agent MUST use the bounded
+onboarding lifecycle before inventing mock data or application-specific
+configuration:
+
+```text
+devsim capabilities --json
+devsim onboard --inspect --json
+devsim onboard --plan --json
+```
+
+The plan separates safe scaffold work (`auto`) from application-aware work
+(`agent_required`) and unresolved configuration (`user_required`). The agent
+may apply only the safe scaffold with `devsim onboard --apply --json`; it must
+review the plan and implement domain behavior, lifecycle commands, seed
+semantics, scenarios, and UI selectors itself. Qualification is:
+
+```bash
+devsim onboard --validate --json
+```
+
+DevSim MUST NOT guess business APIs, authentication, domain invariants, or
+production credentials. `devsim onboard` never modifies application business
+code.
+
 `project status` reports integration completeness. `doctor` reports current
 runtime and environment health. `preview status` reports the active canonical
 preview and its evidence readback.

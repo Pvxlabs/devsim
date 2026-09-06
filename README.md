@@ -88,6 +88,10 @@ devsim detect --json
 devsim capabilities --json
 devsim project status --json
 devsim project validate --json
+devsim onboard --inspect --json
+devsim onboard --plan --json
+devsim onboard --apply --json
+devsim onboard --validate --json
 devsim quickstart
 devsim preview status --json
 devsim preview stop --json

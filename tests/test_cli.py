@@ -6,6 +6,7 @@ import pytest
 from devsim.cli import build_parser, dispatch, emit, main
 from devsim.config import load_manifest
 from devsim.errors import ScenarioChangedError
+from devsim.product import detect_project, onboard_apply, onboard_plan
 
 
 def test_init_creates_manifest_and_state_directory(tmp_path: Path) -> None:
@@ -179,6 +180,83 @@ def test_init_dry_run_and_inspect_do_not_promote_heuristics_to_canonical(tmp_pat
     assert inspected["review_required"] is True
     assert not (tmp_path / "devsim.yaml").exists()
     assert (tmp_path / "devsim.yaml.draft").exists()
+
+
+def test_onboard_inspect_and_plan_are_read_only_and_classify_agent_work(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"dependencies":{"react":"1"}}', encoding="utf-8")
+    before = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+    inspected = dispatch(build_parser().parse_args(["--project-dir", str(tmp_path), "onboard", "--inspect", "--json"]))
+    planned = dispatch(build_parser().parse_args(["--project-dir", str(tmp_path), "onboard", "--plan", "--json"]))
+    after = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+
+    assert before == after
+    assert inspected["project"]["name"] == tmp_path.name
+    assert inspected["detected"]["frontend"] is True
+    modes = {step["capability"]: step["mode"] for step in planned["steps"]}
+    assert modes["manifest"] == "auto"
+    assert modes["seed"] == "agent_required"
+    assert modes["runtime_scenario"] == "agent_required"
+
+
+def test_onboard_apply_is_non_destructive_and_validate_has_stable_checks(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("keep", encoding="utf-8")
+    applied = dispatch(build_parser().parse_args(["--project-dir", str(tmp_path), "onboard", "--apply", "--json"]))
+    assert applied["ok"] is True
+    assert (tmp_path / "devsim.yaml").exists()
+    assert (tmp_path / "devsim" / "seed.yaml").exists()
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "keep"
+
+    validated = dispatch(build_parser().parse_args(["--project-dir", str(tmp_path), "onboard", "--validate", "--json"]))
+    assert validated["integration"] in {"PARTIAL", "READY"}
+    assert {item["name"] for item in validated["checks"]} == {
+        "manifest", "lifecycle", "seed", "scenarios", "presets", "observation", "agent_contract"
+    }
+
+
+def test_onboard_reuses_custom_seed_and_existing_scenarios(tmp_path: Path) -> None:
+    (tmp_path / "devsim").mkdir()
+    (tmp_path / "devsim" / "scenarios").mkdir()
+    (tmp_path / "devsim" / "scenarios" / "existing.yaml").write_text(
+        "version: 1\nname: existing\nruntime: {mode: persistent}\ntimeline: []\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "devsim.yaml").write_text(
+        """version: 1
+project: {name: sample}
+environment: {mode: development}
+database:
+  engine: postgres
+  lifecycle: {}
+seed: {command: bash scripts/seed.sh}
+scenarios: {path: devsim/scenarios}
+runtime: {base_url: http://127.0.0.1:8000}
+""",
+        encoding="utf-8",
+    )
+
+    planned = onboard_plan(tmp_path)
+    applied = onboard_apply(tmp_path)
+
+    scaffold = next(item for item in planned["steps"] if item["capability"] == "scaffold")
+    assert "devsim/seed.yaml" not in scaffold.get("paths", [])
+    assert "devsim/scenarios/normal.yaml" not in scaffold.get("paths", [])
+    assert applied["scaffold"]["created"] == []
+    assert not (tmp_path / "devsim" / "seed.yaml").exists()
+    assert not (tmp_path / "devsim" / "scenarios" / "normal.yaml").exists()
+
+
+def test_detect_finds_nested_compose_without_scanning_dependencies(tmp_path: Path) -> None:
+    compose = tmp_path / "ops" / "local-cluster" / "compose.yaml"
+    compose.parent.mkdir(parents=True)
+    compose.write_text("services:\n  postgres:\n    image: postgres:17\n", encoding="utf-8")
+    (tmp_path / "node_modules" / "ignored").mkdir(parents=True)
+    (tmp_path / "node_modules" / "ignored" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+
+    detected = detect_project(tmp_path)
+
+    assert detected["project_detected"] is True
+    assert detected["compose"] == {"detected": True, "paths": ["ops/local-cluster/compose.yaml"]}
+    assert detected["database"]["engine"] == "postgres"
 
 
 def test_project_validate_failure_has_stable_error_and_exit_code(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

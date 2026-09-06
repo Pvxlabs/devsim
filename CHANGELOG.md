@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- agent-driven project onboarding
+- onboarding inspection and planning
+- idempotent integration apply
+- integration validation
+- existing/partial integration upgrade
+- improved nested project discovery
+- canonical Agent onboarding workflow
+
 ## 0.2.0
 
 ### Agent-native integration
